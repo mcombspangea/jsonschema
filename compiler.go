@@ -21,6 +21,9 @@ type Compiler struct {
 	// Extensions is used to register extensions.
 	extensions map[string]extension
 
+	// Custom errors
+	ValidationError func(scope []SchemaRef, location, instanceLocation, keywordPath string, properties ...interface{}) error
+
 	// ExtractAnnotations tells whether schema annotations has to be extracted
 	// in compiled Schema or not.
 	ExtractAnnotations bool
@@ -35,6 +38,253 @@ type Compiler struct {
 
 	// AssertContent for specifications >= draft2019-09.
 	AssertContent bool
+
+	// User provided error handlers
+	errorHandlers *ErrorHandlers
+}
+
+type ErrorContext struct {
+	Scope            []SchemaRef
+	SchemaLocation   []string
+	InstanceLocation []string
+	Keyword          string
+	KeywordPath      []string
+	CurrentInstance  interface{}
+	MainInstance     interface{}
+	Schema           *Schema
+}
+
+type ErrorHandlers struct {
+	Always               func(ctx *ErrorContext) error
+	Type                 func(ctx *ErrorContext, instanceType string) error
+	Const                func(ctx *ErrorContext) error
+	Enum                 func(ctx *ErrorContext, errorMessage string) error
+	Format               func(ctx *ErrorContext) error
+	MinProperties        func(ctx *ErrorContext, count int) error
+	MaxProperties        func(ctx *ErrorContext, count int) error
+	Required             func(ctx *ErrorContext, missing []string) error
+	PatternProperty      func(ctx *ErrorContext, property string) error
+	AdditionalProperties func(ctx *ErrorContext, unevaluatedProperties []string) error
+	MinItems             func(ctx *ErrorContext, count int) error
+	MaxItems             func(ctx *ErrorContext, count int) error
+	UniqueItems          func(ctx *ErrorContext, itemA interface{}, itemB interface{}, indexA int, indexB int) error
+	AdditionalItems      func(ctx *ErrorContext, allowed int, provided int) error
+	Dependencies         func(ctx *ErrorContext, dependent string, dependency string) error
+	DependentRequired    func(ctx *ErrorContext, dependent string, dependency string) error
+	Pattern              func(ctx *ErrorContext) error
+	ContentEncoding      func(ctx *ErrorContext) error
+	ContentMediaType     func(ctx *ErrorContext) error
+	Minimum              func(ctx *ErrorContext, minimum float64, value float64) error
+	ExclusiveMinimum     func(ctx *ErrorContext, exclusiveMinimum float64, value float64) error
+	Maximum              func(ctx *ErrorContext, maximum float64, value float64) error
+	ExclusiveMaximum     func(ctx *ErrorContext, exclusiveMaximum float64, value float64) error
+	MultipleOf           func(ctx *ErrorContext, multipleOf float64, value float64) error
+	Ref                  func(ctx *ErrorContext, refPath string, causes error) error
+	Not                  func(ctx *ErrorContext) error
+	AllOf                func(ctx *ErrorContext, schemaPath string, err error) error
+	AnyOf                func(ctx *ErrorContext, causes []error) error
+	OneOf                func(ctx *ErrorContext, matched int, current int, causes ...error) error
+	IfThen               func(ctx *ErrorContext, failure error) error
+	IfElse               func(ctx *ErrorContext, failure error) error
+}
+
+func DefaultErrorHandlers() *ErrorHandlers {
+	return &ErrorHandlers{
+		Always:               alwaysErrorHandler,
+		Type:                 typeErrorHandler,
+		Const:                constErrorHandler,
+		Enum:                 enumErrorHandler,
+		Format:               formatErrorHandler,
+		MinProperties:        minPropertiesErrorHandler,
+		MaxProperties:        maxPropertiesErrorHandler,
+		Required:             requiredErrorHandler,
+		PatternProperty:      patternPropertyErrorHandler,
+		AdditionalProperties: additionalPropertiesErrorHandler,
+		MinItems:             minItemsErrorHandler,
+		MaxItems:             maxItemsErrorHandler,
+		UniqueItems:          uniqueItemsErrorHandler,
+		AdditionalItems:      additionalItemsErrorHandler,
+		Dependencies:         dependenciesErrorHandler,
+		DependentRequired:    dependentRequiredErrorHandler,
+		Pattern:              patternErrorHandler,
+		ContentEncoding:      contentEncodingErrorHandler,
+		ContentMediaType:     contentMediaTypeErrorHandler,
+		Minimum:              minimumErrorHandler,
+		ExclusiveMinimum:     exclusiveMinimumErrorHandler,
+		Maximum:              maximumErrorHandler,
+		ExclusiveMaximum:     exclusiveMinimumErrorHandler,
+		MultipleOf:           multipleOfErrorHandler,
+		Ref:                  refErrorHandler,
+		Not:                  notErrorHandler,
+		AllOf:                allOfErrorHandler,
+		AnyOf:                anyOfErrorHandler,
+		OneOf:                oneOfErrorHandler,
+		IfThen:               ifThenErrorHandler,
+		IfElse:               ifElseErrorHandler,
+	}
+}
+
+func alwaysErrorHandler(ctx *ErrorContext) error {
+	return validationErr(ctx, "not allowed")
+}
+
+func typeErrorHandler(ctx *ErrorContext, instanceType string) error {
+	return validationErr(ctx, "expected %s, but got %s", strings.Join(ctx.Schema.Types, " or "), instanceType)
+}
+
+func constErrorHandler(ctx *ErrorContext) error {
+	vType := jsonType(ctx.CurrentInstance)
+	if vType == "object" || vType == "array" {
+		return validationErr(ctx, "const failed")
+	}
+	return validationErr(ctx, "value must be %#v", ctx.Schema.Constant[0])
+}
+
+func enumErrorHandler(ctx *ErrorContext, errorMessage string) error {
+	return validationErr(ctx, errorMessage)
+}
+
+func formatErrorHandler(ctx *ErrorContext) error {
+	var val = ctx.CurrentInstance
+	if v, ok := ctx.CurrentInstance.(string); ok {
+		val = quote(v)
+	}
+	return validationErr(ctx, "%v is not a valid %s", val, quote(ctx.Schema.Format))
+}
+
+func minPropertiesErrorHandler(ctx *ErrorContext, count int) error {
+	return validationErr(ctx, "minimum %d properties allowed, but found %d properties", ctx.Schema.MinProperties, count)
+}
+
+func maxPropertiesErrorHandler(ctx *ErrorContext, count int) error {
+	return validationErr(ctx, "maximum %d properties allowed, but found %d properties", ctx.Schema.MaxProperties, count)
+}
+
+func requiredErrorHandler(ctx *ErrorContext, missing []string) error {
+	return validationErr(ctx, "missing properties: %s", strings.Join(missing, ", "))
+}
+
+func patternPropertyErrorHandler(ctx *ErrorContext, property string) error {
+	return validationErr(ctx, "patternProperty %s is not valid regex", property)
+}
+
+func additionalPropertiesErrorHandler(ctx *ErrorContext, unevaluatedProperties []string) error {
+	props := make([]string, 0, len(unevaluatedProperties))
+	for i, prop := range unevaluatedProperties {
+		props[i] = quote(prop)
+	}
+	return validationErr(ctx, "additionalProperties %s not allowed", strings.Join(props, ", "))
+}
+
+func minItemsErrorHandler(ctx *ErrorContext, provided int) error {
+	return validationErr(ctx, "minimum %d items required, but found %d items", ctx.Schema.MinItems, provided)
+}
+
+func maxItemsErrorHandler(ctx *ErrorContext, provided int) error {
+	return validationErr(ctx, "maximum %d items required, but found %d items", ctx.Schema.MaxItems, provided)
+}
+
+func uniqueItemsErrorHandler(ctx *ErrorContext, itemA interface{}, itemB interface{}, indexA int, indexB int) error {
+	return validationErr(ctx, "items at index %d and %d are equal", indexA, indexB)
+}
+
+func additionalItemsErrorHandler(ctx *ErrorContext, allowed int, provided int) error {
+	return validationErr(ctx, "only %d items are allowed, but found %d items", allowed, provided)
+}
+
+func dependenciesErrorHandler(ctx *ErrorContext, dependent string, dependency string) error {
+	return validationErr(ctx, "property %s is required, if %s property exists", dependency, dependent)
+}
+
+func dependentRequiredErrorHandler(ctx *ErrorContext, dependent string, dependency string) error {
+	return validationErr(ctx, "property %s is required, if %s property exists", dependency, dependent)
+}
+
+func patternErrorHandler(ctx *ErrorContext) error {
+	return validationErr(ctx, "does not match pattern %s", quote(ctx.Schema.Pattern.String()))
+}
+
+func contentEncodingErrorHandler(ctx *ErrorContext) error {
+	return validationErr(ctx, "%s is not %s encoded", quote(ctx.CurrentInstance.(string)), ctx.Schema.ContentEncoding)
+}
+
+func contentMediaTypeErrorHandler(ctx *ErrorContext) error {
+	return validationErr(ctx, "value is not of mediatype %s", ctx.Schema.ContentMediaType)
+}
+
+func minimumErrorHandler(ctx *ErrorContext, minimum float64, value float64) error {
+	return validationErr(ctx, "must be >= %v but found %v", minimum, value)
+}
+
+func exclusiveMinimumErrorHandler(ctx *ErrorContext, exclusiveMinimum float64, value float64) error {
+	return validationErr(ctx, "must be > %v but found %v", exclusiveMinimum, value)
+}
+
+func maximumErrorHandler(ctx *ErrorContext, maximum float64, value float64) error {
+	return validationErr(ctx, "must be <= %v but found %v", maximum, value)
+}
+
+func exclusiveMaximumErrorHandler(ctx *ErrorContext, exclusiveMaximum float64, value float64) error {
+	return validationErr(ctx, "must be < %v but found %v", exclusiveMaximum, value)
+}
+
+func multipleOfErrorHandler(ctx *ErrorContext, multipleOf float64, value float64) error {
+	return validationErr(ctx, "%v not multipleOf %v", value, multipleOf)
+}
+
+func refErrorHandler(ctx *ErrorContext, refPath string, causes error) error {
+	return validationErr(ctx, "doesn't validate with %s", refPath).causes(causes)
+}
+
+func notErrorHandler(ctx *ErrorContext) error {
+	return validationErr(ctx, "not failed")
+}
+
+func allOfErrorHandler(ctx *ErrorContext, schemaPath string, err error) error {
+	return validationErr(ctx, "allOf failed").add(err)
+}
+
+func anyOfErrorHandler(ctx *ErrorContext, causes []error) error {
+	return validationErr(ctx, "anyOf failed").add(causes...)
+}
+
+func oneOfErrorHandler(ctx *ErrorContext, matched int, current int, causes ...error) error {
+	if matched == -1 {
+		return validationErr(ctx, "oneOf failed").add(causes...)
+	}
+	return validationErr(ctx, "valid against schemas at indexes %d and %d", matched, current)
+}
+
+func ifThenErrorHandler(ctx *ErrorContext, failure error) error {
+	return validationErr(ctx, "if-then failed").add(failure)
+}
+
+func ifElseErrorHandler(ctx *ErrorContext, failure error) error {
+	return validationErr(ctx, "if-else failed").add(failure)
+}
+
+func validationErr(ctx *ErrorContext, format string, args ...interface{}) *ValidationError {
+	keywordPath := toJSONPtr(ctx.KeywordPath...)
+	schemaLocation := toJSONPtr(ctx.SchemaLocation...)
+	instanceLocation := toJSONPtr(ctx.InstanceLocation...)
+	return &ValidationError{
+		KeywordLocation:         keywordLocation(ctx.Scope, keywordPath),
+		AbsoluteKeywordLocation: joinPtr(schemaLocation, keywordPath),
+		InstanceLocation:        instanceLocation,
+		Message:                 fmt.Sprintf(format, args...),
+	}
+}
+
+func toJSONPtr(path ...string) string {
+	if len(path) == 0 {
+		return "/"
+	}
+
+	for i, s := range path {
+		path[i] = strings.ReplaceAll(s, "~", "~0")
+		path[i] = strings.ReplaceAll(s, "/", "~1")
+	}
+	return "/" + strings.Join(path, "/")
 }
 
 // Compile parses json-schema at given url returns, if successful,
@@ -74,7 +324,7 @@ func MustCompileString(url, schema string) *Schema {
 // if '$schema' attribute is missing, it is treated as draft7. to change this
 // behavior change Compiler.Draft value
 func NewCompiler() *Compiler {
-	return &Compiler{Draft: latest, resources: make(map[string]*resource), extensions: make(map[string]extension)}
+	return &Compiler{Draft: latest, resources: make(map[string]*resource), extensions: make(map[string]extension), errorHandlers: DefaultErrorHandlers()}
 }
 
 // AddResource adds in-memory resource to the compiler.
@@ -169,7 +419,104 @@ func (c *Compiler) findResource(url string) (*resource, error) {
 	return r, nil
 }
 
-func (c *Compiler) compileURL(url string, stack []schemaRef, ptr string) (*Schema, error) {
+func (c *Compiler) RegisterErrorHandlers(h *ErrorHandlers) {
+	d := c.errorHandlers
+	if h.Always != nil {
+		d.Always = h.Always
+	}
+	if h.Type != nil {
+		d.Type = h.Type
+	}
+	if h.Const != nil {
+		d.Const = h.Const
+	}
+	if h.Enum != nil {
+		d.Enum = h.Enum
+	}
+	if h.Format != nil {
+		d.Format = h.Format
+	}
+	if h.MinProperties != nil {
+		d.MinProperties = h.MinProperties
+	}
+	if h.MaxProperties != nil {
+		d.MaxProperties = h.MaxProperties
+	}
+	if h.Required != nil {
+		d.Required = h.Required
+	}
+	if h.PatternProperty != nil {
+		d.PatternProperty = h.PatternProperty
+	}
+	if h.AdditionalProperties != nil {
+		d.AdditionalProperties = h.AdditionalProperties
+	}
+	if h.MinItems != nil {
+		d.MinItems = h.MinItems
+	}
+	if h.MaxItems != nil {
+		d.MaxItems = h.MaxItems
+	}
+	if h.UniqueItems != nil {
+		d.UniqueItems = h.UniqueItems
+	}
+	if h.AdditionalItems != nil {
+		d.AdditionalItems = h.AdditionalItems
+	}
+	if h.Dependencies != nil {
+		d.Dependencies = h.Dependencies
+	}
+	if h.DependentRequired != nil {
+		d.DependentRequired = h.DependentRequired
+	}
+	if h.Pattern != nil {
+		d.Pattern = h.Pattern
+	}
+	if h.ContentEncoding != nil {
+		d.ContentEncoding = h.ContentEncoding
+	}
+	if h.ContentMediaType != nil {
+		d.ContentMediaType = h.ContentMediaType
+	}
+	if h.Minimum != nil {
+		d.Minimum = h.Minimum
+	}
+	if h.ExclusiveMinimum != nil {
+		d.ExclusiveMinimum = h.ExclusiveMinimum
+	}
+	if h.Maximum != nil {
+		d.Maximum = h.Maximum
+	}
+	if h.ExclusiveMaximum != nil {
+		d.ExclusiveMaximum = h.ExclusiveMaximum
+	}
+	if h.MultipleOf != nil {
+		d.MultipleOf = h.MultipleOf
+	}
+	if h.Ref != nil {
+		d.Ref = h.Ref
+	}
+	if h.Not != nil {
+		d.Not = h.Not
+	}
+	if h.AllOf != nil {
+		d.AllOf = h.AllOf
+	}
+	if h.AnyOf != nil {
+		d.AnyOf = h.AnyOf
+	}
+	if h.OneOf != nil {
+		d.OneOf = h.OneOf
+	}
+	if h.IfThen != nil {
+		d.IfThen = h.IfThen
+	}
+	if h.IfElse != nil {
+		d.IfElse = h.IfElse
+	}
+}
+
+func (c *Compiler) compileURL(url string, stack []SchemaRef, ptr string) (*Schema, error) {
 	// if url points to a draft, return Draft.meta
 	if d := findDraft(url); d != nil && d.meta != nil {
 		return d.meta, nil
@@ -183,7 +530,7 @@ func (c *Compiler) compileURL(url string, stack []schemaRef, ptr string) (*Schem
 	return c.compileRef(r, stack, ptr, r, f)
 }
 
-func (c *Compiler) compileRef(r *resource, stack []schemaRef, refPtr string, res *resource, ref string) (*Schema, error) {
+func (c *Compiler) compileRef(r *resource, stack []SchemaRef, refPtr string, res *resource, ref string) (*Schema, error) {
 	base := r.baseURL(res.floc)
 	ref, err := resolveURL(base, ref)
 	if err != nil {
@@ -205,14 +552,14 @@ func (c *Compiler) compileRef(r *resource, stack []schemaRef, refPtr string, res
 	}
 
 	if sr.schema != nil {
-		if err := checkLoop(stack, schemaRef{refPtr, sr.schema, false}); err != nil {
+		if err := checkLoop(stack, SchemaRef{refPtr, sr.schema, false}); err != nil {
 			return nil, err
 		}
 		return sr.schema, nil
 	}
 
 	sr.schema = newSchema(r.url, sr.floc, sr.doc)
-	return c.compile(r, stack, schemaRef{refPtr, sr.schema, false}, sr)
+	return c.compile(r, stack, SchemaRef{refPtr, sr.schema, false}, sr)
 }
 
 func (c *Compiler) compileDynamicAnchors(r *resource, res *resource) error {
@@ -236,7 +583,7 @@ func (c *Compiler) compileDynamicAnchors(r *resource, res *resource) error {
 	return nil
 }
 
-func (c *Compiler) compile(r *resource, stack []schemaRef, sref schemaRef, res *resource) (*Schema, error) {
+func (c *Compiler) compile(r *resource, stack []SchemaRef, sref SchemaRef, res *resource) (*Schema, error) {
 	if err := c.compileDynamicAnchors(r, res); err != nil {
 		return nil, err
 	}
@@ -250,7 +597,7 @@ func (c *Compiler) compile(r *resource, stack []schemaRef, sref schemaRef, res *
 	}
 }
 
-func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, res *resource) error {
+func (c *Compiler) compileMap(r *resource, stack []SchemaRef, sref SchemaRef, res *resource) error {
 	m := res.doc.(map[string]interface{})
 
 	if err := checkLoop(stack, sref); err != nil {
@@ -322,11 +669,11 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 	}
 
-	compile := func(stack []schemaRef, ptr string) (*Schema, error) {
+	compile := func(stack []SchemaRef, ptr string) (*Schema, error) {
 		return c.compileRef(r, stack, ptr, res, r.url+res.floc+"/"+ptr)
 	}
 
-	loadSchema := func(pname string, stack []schemaRef) (*Schema, error) {
+	loadSchema := func(pname string, stack []SchemaRef) (*Schema, error) {
 		if _, ok := m[pname]; ok {
 			return compile(stack, escape(pname))
 		}
@@ -337,7 +684,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		return err
 	}
 
-	loadSchemas := func(pname string, stack []schemaRef) ([]*Schema, error) {
+	loadSchemas := func(pname string, stack []SchemaRef) ([]*Schema, error) {
 		if pvalue, ok := m[pname]; ok {
 			pvalue := pvalue.([]interface{})
 			schemas := make([]*Schema, len(pvalue))
@@ -665,29 +1012,29 @@ func toStrings(arr []interface{}) []string {
 }
 
 // SchemaRef captures schema and the path referring to it.
-type schemaRef struct {
-	path    string  // relative-json-pointer to schema
-	schema  *Schema // target schema
-	discard bool    // true when scope left
+type SchemaRef struct {
+	Path    string  // relative-json-pointer to schema
+	Schema  *Schema // target schema
+	Discard bool    // true when scope left
 }
 
-func (sr schemaRef) String() string {
-	return fmt.Sprintf("(%s)%v", sr.path, sr.schema)
+func (sr SchemaRef) String() string {
+	return fmt.Sprintf("(%s)%v", sr.Path, sr.Schema)
 }
 
-func checkLoop(stack []schemaRef, sref schemaRef) error {
+func checkLoop(stack []SchemaRef, sref SchemaRef) error {
 	for _, ref := range stack {
-		if ref.schema == sref.schema {
+		if ref.Schema == sref.Schema {
 			return infiniteLoopError(stack, sref)
 		}
 	}
 	return nil
 }
 
-func keywordLocation(stack []schemaRef, path string) string {
+func keywordLocation(stack []SchemaRef, path string) string {
 	var loc string
 	for _, ref := range stack[1:] {
-		loc += "/" + ref.path
+		loc += "/" + ref.Path
 	}
 	if path != "" {
 		loc = loc + "/" + path

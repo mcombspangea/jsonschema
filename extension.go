@@ -35,7 +35,7 @@ func (c *Compiler) RegisterExtension(name string, meta *Schema, ext ExtCompiler)
 type CompilerContext struct {
 	c     *Compiler
 	r     *resource
-	stack []schemaRef
+	stack []SchemaRef
 	res   *resource
 }
 
@@ -47,7 +47,7 @@ type CompilerContext struct {
 // applicableOnSameInstance tells whether current schema and the given schema
 // are applied on same instance value. this is used to detect infinite loop in schema.
 func (ctx CompilerContext) Compile(schPath string, applicableOnSameInstance bool) (*Schema, error) {
-	var stack []schemaRef
+	var stack []SchemaRef
 	if applicableOnSameInstance {
 		stack = ctx.stack
 	}
@@ -61,7 +61,7 @@ func (ctx CompilerContext) Compile(schPath string, applicableOnSameInstance bool
 // applicableOnSameInstance tells whether current schema and the given schema
 // are applied on same instance value. this is used to detect infinite loop in schema.
 func (ctx CompilerContext) CompileRef(ref string, refPath string, applicableOnSameInstance bool) (*Schema, error) {
-	var stack []schemaRef
+	var stack []SchemaRef
 	if applicableOnSameInstance {
 		stack = ctx.stack
 	}

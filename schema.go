@@ -165,7 +165,7 @@ func (s *Schema) validateValue(v interface{}, vloc string) (err error) {
 }
 
 // validate validates given value v with this schema.
-func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interface{}, vloc string) (result validationResult, err error) {
+func (s *Schema) validate(scope []SchemaRef, vscope int, spath string, v interface{}, vloc string) (result validationResult, err error) {
 	validationError := func(keywordPath string, format string, a ...interface{}) *ValidationError {
 		return &ValidationError{
 			KeywordLocation:         keywordLocation(scope, keywordPath),
@@ -175,7 +175,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		}
 	}
 
-	sref := schemaRef{spath, s, false}
+	sref := SchemaRef{spath, s, false}
 	if err := checkLoop(scope[len(scope)-vscope:], sref); err != nil {
 		panic(err)
 	}
@@ -341,6 +341,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		if s.AdditionalProperties != nil {
 			if allowed, ok := s.AdditionalProperties.(bool); ok {
 				if !allowed && len(result.unevalProps) > 0 {
+					// TODO change to uneval props
 					errors = append(errors, validationError("additionalProperties", "additionalProperties %s not allowed", result.unevalPnames()))
 				}
 			} else {
@@ -569,8 +570,8 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		if sch.RecursiveAnchor {
 			// recursiveRef based on scope
 			for _, e := range scope {
-				if e.schema.RecursiveAnchor {
-					sch = e.schema
+				if e.Schema.RecursiveAnchor {
+					sch = e.Schema
 					break
 				}
 			}
@@ -585,10 +586,10 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			// dynamicRef based on scope
 			for i := len(scope) - 1; i >= 0; i-- {
 				sr := scope[i]
-				if sr.discard {
+				if sr.Discard {
 					break
 				}
-				for _, da := range sr.schema.dynamicAnchors {
+				for _, da := range sr.Schema.dynamicAnchors {
 					if da.DynamicAnchor == s.DynamicRef.DynamicAnchor && da != s.DynamicRef {
 						sch = da
 						break
@@ -651,7 +652,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 	if s.If != nil {
 		err := validateInplace(s.If, "if")
 		// "if" leaves dynamic scope
-		scope[len(scope)-1].discard = true
+		scope[len(scope)-1].Discard = true
 		if err == nil {
 			if s.Then != nil {
 				if err := validateInplace(s.Then, "then"); err != nil {
@@ -666,10 +667,11 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			}
 		}
 		// restore dynamic scope
-		scope[len(scope)-1].discard = false
+		scope[len(scope)-1].Discard = false
 	}
 
 	for _, ext := range s.Extensions {
+		fmt.Printf("Vloc: %s spath: %s\n", vloc, spath)
 		if err := ext.Validate(ValidationContext{result, validate, validateInplace, validationError}, v); err != nil {
 			errors = append(errors, err)
 		}

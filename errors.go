@@ -23,16 +23,16 @@ func (e InfiniteLoopError) Error() string {
 	return "jsonschema: infinite loop " + string(e)
 }
 
-func infiniteLoopError(stack []schemaRef, sref schemaRef) InfiniteLoopError {
+func infiniteLoopError(stack []SchemaRef, sref SchemaRef) InfiniteLoopError {
 	var path string
 	for _, ref := range stack {
 		if path == "" {
-			path += ref.schema.Location
+			path += ref.Schema.Location
 		} else {
-			path += "/" + ref.path
+			path += "/" + ref.Path
 		}
 	}
-	return InfiniteLoopError(path + "/" + sref.path)
+	return InfiniteLoopError(path + "/" + sref.Path)
 }
 
 // SchemaError is the error type returned by Compile.
