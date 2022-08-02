@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/santhosh-tekuri/jsonschema/v5"
-	_ "github.com/santhosh-tekuri/jsonschema/v5/httploader"
+	"github.com/mcombspangea/jsonschema/v5"
+	_ "github.com/mcombspangea/jsonschema/v5/httploader"
 )
 
 var testSuite = "testdata/JSON-Schema-Test-Suite@ab0b1ae"
@@ -557,7 +557,7 @@ func toFileURL(path string) string {
 	return u.String()
 }
 
-// TestPanic tests https://github.com/santhosh-tekuri/jsonschema/issues/18
+// TestPanic tests https://github.com/mcombspangea/jsonschema/issues/18
 func TestPanic(t *testing.T) {
 	schema_d := `
 	{
