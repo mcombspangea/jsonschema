@@ -1,6 +1,7 @@
 package jsonschema
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,8 +45,8 @@ func newResource(url string, r io.Reader) (*resource, error) {
 }
 
 // fillSubschemas fills subschemas in res into r.subresources
-func (r *resource) fillSubschemas(c *Compiler, res *resource) error {
-	if err := c.validateSchema(r, res.doc, res.floc[1:]); err != nil {
+func (r *resource) fillSubschemas(ctx context.Context, c *Compiler, res *resource) error {
+	if err := c.validateSchema(ctx, r, res.doc, res.floc[1:]); err != nil {
 		return err
 	}
 
@@ -95,7 +96,7 @@ func (r *resource) findResource(url string) *resource {
 }
 
 // resolve fragment f with sr as base
-func (r *resource) resolveFragment(c *Compiler, sr *resource, f string) (*resource, error) {
+func (r *resource) resolveFragment(ctx context.Context, c *Compiler, sr *resource, f string) (*resource, error) {
 	if f == "#" || f == "#/" {
 		return sr, nil
 	}
@@ -164,7 +165,7 @@ func (r *resource) resolveFragment(c *Compiler, sr *resource, f string) (*resour
 	}
 	res := &resource{url: id, floc: floc, doc: doc}
 	r.subresources[floc] = res
-	if err := r.fillSubschemas(c, res); err != nil {
+	if err := r.fillSubschemas(ctx, c, res); err != nil {
 		return nil, err
 	}
 	return res, nil

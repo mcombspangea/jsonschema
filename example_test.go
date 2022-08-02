@@ -1,6 +1,7 @@
 package jsonschema_test
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
@@ -14,8 +15,10 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
+var ctx = context.Background()
+
 func Example() {
-	sch, err := jsonschema.Compile("testdata/person_schema.json")
+	sch, err := jsonschema.Compile(ctx, "testdata/person_schema.json")
 	if err != nil {
 		log.Fatalf("%#v", err)
 	}
@@ -30,7 +33,7 @@ func Example() {
 		log.Fatal(err)
 	}
 
-	if err = sch.Validate(v); err != nil {
+	if err = sch.Validate(ctx, v); err != nil {
 		log.Fatalf("%#v", err)
 	}
 	// Output:
@@ -41,7 +44,7 @@ func Example_fromString() {
 	schema := `{"type": "object"}`
 	instance := `{"foo": "bar"}`
 
-	sch, err := jsonschema.CompileString("schema.json", schema)
+	sch, err := jsonschema.CompileString(ctx, "schema.json", schema)
 	if err != nil {
 		log.Fatalf("%#v", err)
 	}
@@ -51,7 +54,7 @@ func Example_fromString() {
 		log.Fatal(err)
 	}
 
-	if err = sch.Validate(v); err != nil {
+	if err = sch.Validate(ctx, v); err != nil {
 		log.Fatalf("%#v", err)
 	}
 	// Output:
@@ -66,7 +69,7 @@ func Example_fromStrings() {
 	if err := c.AddResource("obj.json", strings.NewReader(`{"type":"object"}`)); err != nil {
 		log.Fatal(err)
 	}
-	sch, err := c.Compile("main.json")
+	sch, err := c.Compile(ctx, "main.json")
 	if err != nil {
 		log.Fatalf("%#v", err)
 	}
@@ -76,7 +79,7 @@ func Example_fromStrings() {
 		log.Fatal(err)
 	}
 
-	if err = sch.Validate(v); err != nil {
+	if err = sch.Validate(ctx, v); err != nil {
 		log.Fatalf("%#v", err)
 	}
 	// Output:
@@ -101,12 +104,12 @@ func Example_userDefinedFormat() {
 	}`
 	instance := 5
 
-	sch, err := jsonschema.CompileString("schema.json", schema)
+	sch, err := jsonschema.CompileString(ctx, "schema.json", schema)
 	if err != nil {
 		log.Fatalf("%#v", err)
 	}
 
-	if err = sch.Validate(instance); err != nil {
+	if err = sch.Validate(ctx, instance); err != nil {
 		log.Fatalf("%#v", err)
 	}
 	// Output:
@@ -133,7 +136,7 @@ func Example_userDefinedContent() {
 	}`
 	instance := `{"xml": "3c726f6f742f3e"}`
 
-	sch, err := jsonschema.CompileString("schema.json", schema)
+	sch, err := jsonschema.CompileString(ctx, "schema.json", schema)
 	if err != nil {
 		log.Fatalf("%#v", err)
 	}
@@ -143,7 +146,7 @@ func Example_userDefinedContent() {
 		log.Fatal(err)
 	}
 
-	if err = sch.Validate(v); err != nil {
+	if err = sch.Validate(ctx, v); err != nil {
 		log.Fatalf("%#v", err)
 	}
 	// Output:
@@ -166,7 +169,7 @@ func Example_userDefinedLoader() {
 		return ioutil.NopCloser(strings.NewReader(schema)), nil
 	}
 
-	sch, err := jsonschema.Compile("map:///main.json")
+	sch, err := jsonschema.Compile(ctx, "map:///main.json")
 	if err != nil {
 		log.Fatalf("%+v", err)
 	}
@@ -176,7 +179,7 @@ func Example_userDefinedLoader() {
 		log.Fatal(err)
 	}
 
-	if err = sch.Validate(v); err != nil {
+	if err = sch.Validate(ctx, v); err != nil {
 		log.Fatalf("%#v", err)
 	}
 	// Output:

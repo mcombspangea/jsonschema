@@ -68,6 +68,7 @@ func (se *SchemaError) GoString() string {
 
 // ValidationError is the error type returned by Validate.
 type ValidationError struct {
+	Keyword                 string             // actual keyword name
 	KeywordLocation         string             // validation path of validating keyword or schema
 	AbsoluteKeywordLocation string             // absolute location of validating keyword or schema
 	InstanceLocation        string             // location of the json value within the instance being validated

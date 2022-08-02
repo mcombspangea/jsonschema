@@ -1,5 +1,7 @@
 package jsonschema
 
+import "context"
+
 // ExtCompiler compiles custom keyword(s) into ExtSchema.
 type ExtCompiler interface {
 	// Compile compiles the custom keywords in schema m and returns its compiled representation.
@@ -12,7 +14,7 @@ type ExtCompiler interface {
 type ExtSchema interface {
 	// Validate validates the json value v with this ExtSchema.
 	// Returned error must be *ValidationError.
-	Validate(ctx ValidationContext, v interface{}) error
+	Validate(ctx context.Context, vctx ValidationContext, v interface{}) error
 }
 
 type extension struct {
@@ -46,12 +48,12 @@ type CompilerContext struct {
 //
 // applicableOnSameInstance tells whether current schema and the given schema
 // are applied on same instance value. this is used to detect infinite loop in schema.
-func (ctx CompilerContext) Compile(schPath string, applicableOnSameInstance bool) (*Schema, error) {
+func (cctx CompilerContext) Compile(ctx context.Context, schPath string, applicableOnSameInstance bool) (*Schema, error) {
 	var stack []schemaRef
 	if applicableOnSameInstance {
-		stack = ctx.stack
+		stack = cctx.stack
 	}
-	return ctx.c.compileRef(ctx.r, stack, schPath, ctx.res, ctx.r.url+ctx.res.floc+"/"+schPath)
+	return cctx.c.compileRef(ctx, cctx.r, stack, schPath, cctx.res, cctx.r.url+cctx.res.floc+"/"+schPath)
 }
 
 // CompileRef compiles the schema referenced by ref uri
@@ -60,12 +62,12 @@ func (ctx CompilerContext) Compile(schPath string, applicableOnSameInstance bool
 //
 // applicableOnSameInstance tells whether current schema and the given schema
 // are applied on same instance value. this is used to detect infinite loop in schema.
-func (ctx CompilerContext) CompileRef(ref string, refPath string, applicableOnSameInstance bool) (*Schema, error) {
+func (cctx CompilerContext) CompileRef(ctx context.Context, ref string, refPath string, applicableOnSameInstance bool) (*Schema, error) {
 	var stack []schemaRef
 	if applicableOnSameInstance {
-		stack = ctx.stack
+		stack = cctx.stack
 	}
-	return ctx.c.compileRef(ctx.r, stack, refPath, ctx.res, ref)
+	return cctx.c.compileRef(ctx, cctx.r, stack, refPath, cctx.res, ref)
 }
 
 // ValidationContext ---
@@ -73,9 +75,9 @@ func (ctx CompilerContext) CompileRef(ref string, refPath string, applicableOnSa
 // ValidationContext provides additional context required in validating for extension.
 type ValidationContext struct {
 	result          validationResult
-	validate        func(sch *Schema, schPath string, v interface{}, vpath string) error
-	validateInplace func(sch *Schema, schPath string) error
-	validationError func(keywordPath string, format string, a ...interface{}) *ValidationError
+	validate        func(ctx context.Context, sch *Schema, schPath string, v interface{}, vpath string) error
+	validateInplace func(ctx context.Context, sch *Schema, schPath string) error
+	validationError func(ctx context.Context, keywordPath string, format string, a ...interface{}) *ValidationError
 }
 
 // EvaluatedProp marks given property of object as evaluated.
@@ -94,18 +96,18 @@ func (ctx ValidationContext) EvaluatedItem(index int) {
 //
 // spath is relative-json-pointer to s
 // vpath is relative-json-pointer to v.
-func (ctx ValidationContext) Validate(s *Schema, spath string, v interface{}, vpath string) error {
+func (vctx ValidationContext) Validate(ctx context.Context, s *Schema, spath string, v interface{}, vpath string) error {
 	if vpath == "" {
-		return ctx.validateInplace(s, spath)
+		return vctx.validateInplace(ctx, s, spath)
 	}
-	return ctx.validate(s, spath, v, vpath)
+	return vctx.validate(ctx, s, spath, v, vpath)
 }
 
 // Error used to construct validation error by extensions.
 //
 // keywordPath is relative-json-pointer to keyword.
-func (ctx ValidationContext) Error(keywordPath string, format string, a ...interface{}) *ValidationError {
-	return ctx.validationError(keywordPath, format, a...)
+func (vctx ValidationContext) Error(ctx context.Context, keywordPath string, format string, a ...interface{}) *ValidationError {
+	return vctx.validationError(ctx, keywordPath, format, a...)
 }
 
 // Group is used by extensions to group multiple errors as causes to parent error.

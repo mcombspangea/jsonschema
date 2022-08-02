@@ -1,6 +1,7 @@
 package jsonschema
 
 import (
+	"context"
 	"strconv"
 	"strings"
 )
@@ -14,7 +15,7 @@ type Draft struct {
 	subschemas map[string]position
 }
 
-func (d *Draft) loadMeta(base string, schemas map[string]string) {
+func (d *Draft) loadMeta(ctx context.Context, base string, schemas map[string]string) {
 	c := NewCompiler()
 	c.AssertFormat = true
 	for u, schema := range schemas {
@@ -22,7 +23,7 @@ func (d *Draft) loadMeta(base string, schemas map[string]string) {
 			panic(err)
 		}
 	}
-	d.meta = c.MustCompile(base + "/schema")
+	d.meta = c.MustCompile(ctx, base+"/schema")
 }
 
 func (d *Draft) getID(sch interface{}) string {
@@ -217,7 +218,7 @@ func init() {
 	subschemas["prefixItems"] = item
 	Draft2020.subschemas = clone(subschemas)
 
-	Draft4.loadMeta("http://json-schema.org/draft-04", map[string]string{
+	Draft4.loadMeta(context.Background(), "http://json-schema.org/draft-04", map[string]string{
 		"schema": `{
 			"$schema": "http://json-schema.org/draft-04/schema#",
 			"description": "Core schema meta-schema",
@@ -372,7 +373,7 @@ func init() {
 			"default": {}
 		}`,
 	})
-	Draft6.loadMeta("http://json-schema.org/draft-06", map[string]string{
+	Draft6.loadMeta(context.Background(), "http://json-schema.org/draft-06", map[string]string{
 		"schema": `{
 			"$schema": "http://json-schema.org/draft-06/schema#",
 			"$id": "http://json-schema.org/draft-06/schema#",
@@ -525,7 +526,7 @@ func init() {
 			"default": {}
 		}`,
 	})
-	Draft7.loadMeta("http://json-schema.org/draft-07", map[string]string{
+	Draft7.loadMeta(context.Background(), "http://json-schema.org/draft-07", map[string]string{
 		"schema": `{
 			"$schema": "http://json-schema.org/draft-07/schema#",
 			"$id": "http://json-schema.org/draft-07/schema#",
@@ -699,7 +700,7 @@ func init() {
 			"default": true
 		}`,
 	})
-	Draft2019.loadMeta("https://json-schema.org/draft/2019-09", map[string]string{
+	Draft2019.loadMeta(context.Background(), "https://json-schema.org/draft/2019-09", map[string]string{
 		"schema": `{
 			"$schema": "https://json-schema.org/draft/2019-09/schema",
 			"$id": "https://json-schema.org/draft/2019-09/schema",
@@ -1022,7 +1023,7 @@ func init() {
 			}
 		}`,
 	})
-	Draft2020.loadMeta("https://json-schema.org/draft/2020-12", map[string]string{
+	Draft2020.loadMeta(context.Background(), "https://json-schema.org/draft/2020-12", map[string]string{
 		"schema": `{
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"$id": "https://json-schema.org/draft/2020-12/schema",

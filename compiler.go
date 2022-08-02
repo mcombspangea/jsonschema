@@ -1,6 +1,7 @@
 package jsonschema
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,23 +42,23 @@ type Compiler struct {
 // a Schema object that can be used to match against json.
 //
 // Returned error can be *SchemaError
-func Compile(url string) (*Schema, error) {
-	return NewCompiler().Compile(url)
+func Compile(ctx context.Context, url string) (*Schema, error) {
+	return NewCompiler().Compile(ctx, url)
 }
 
 // MustCompile is like Compile but panics if the url cannot be compiled to *Schema.
 // It simplifies safe initialization of global variables holding compiled Schemas.
-func MustCompile(url string) *Schema {
-	return NewCompiler().MustCompile(url)
+func MustCompile(ctx context.Context, url string) *Schema {
+	return NewCompiler().MustCompile(ctx, url)
 }
 
 // CompileString parses and compiles the given schema with given base url.
-func CompileString(url, schema string) (*Schema, error) {
+func CompileString(ctx context.Context, url, schema string) (*Schema, error) {
 	c := NewCompiler()
 	if err := c.AddResource(url, strings.NewReader(schema)); err != nil {
 		return nil, err
 	}
-	return c.Compile(url)
+	return c.Compile(ctx, url)
 }
 
 // MustCompileString is like CompileString but panics on error.
@@ -67,7 +68,7 @@ func MustCompileString(url, schema string) *Schema {
 	if err := c.AddResource(url, strings.NewReader(schema)); err != nil {
 		panic(err)
 	}
-	return c.MustCompile(url)
+	return c.MustCompile(context.Background(), url)
 }
 
 // NewCompiler returns a json-schema Compiler object.
@@ -91,8 +92,8 @@ func (c *Compiler) AddResource(url string, r io.Reader) error {
 
 // MustCompile is like Compile but panics if the url cannot be compiled to *Schema.
 // It simplifies safe initialization of global variables holding compiled Schemas.
-func (c *Compiler) MustCompile(url string) *Schema {
-	s, err := c.Compile(url)
+func (c *Compiler) MustCompile(ctx context.Context, url string) *Schema {
+	s, err := c.Compile(ctx, url)
 	if err != nil {
 		panic(fmt.Sprintf("jsonschema: %#v", err))
 	}
@@ -103,7 +104,7 @@ func (c *Compiler) MustCompile(url string) *Schema {
 // a Schema object that can be used to match against json.
 //
 // error returned will be of type *SchemaError
-func (c *Compiler) Compile(url string) (*Schema, error) {
+func (c *Compiler) Compile(ctx context.Context, url string) (*Schema, error) {
 	// make url absolute
 	u, err := toAbs(url)
 	if err != nil {
@@ -111,14 +112,14 @@ func (c *Compiler) Compile(url string) (*Schema, error) {
 	}
 	url = u
 
-	sch, err := c.compileURL(url, nil, "#")
+	sch, err := c.compileURL(ctx, url, nil, "#")
 	if err != nil {
 		err = &SchemaError{url, err}
 	}
 	return sch, err
 }
 
-func (c *Compiler) findResource(url string) (*resource, error) {
+func (c *Compiler) findResource(ctx context.Context, url string) (*resource, error) {
 	if _, ok := c.resources[url]; !ok {
 		// load resource
 		loadURL := LoadURL
@@ -162,28 +163,28 @@ func (c *Compiler) findResource(url string) (*resource, error) {
 		r.url = id
 	}
 
-	if err := r.fillSubschemas(c, r); err != nil {
+	if err := r.fillSubschemas(ctx, c, r); err != nil {
 		return nil, err
 	}
 
 	return r, nil
 }
 
-func (c *Compiler) compileURL(url string, stack []schemaRef, ptr string) (*Schema, error) {
+func (c *Compiler) compileURL(ctx context.Context, url string, stack []schemaRef, ptr string) (*Schema, error) {
 	// if url points to a draft, return Draft.meta
 	if d := findDraft(url); d != nil && d.meta != nil {
 		return d.meta, nil
 	}
 
 	b, f := split(url)
-	r, err := c.findResource(b)
+	r, err := c.findResource(ctx, b)
 	if err != nil {
 		return nil, err
 	}
-	return c.compileRef(r, stack, ptr, r, f)
+	return c.compileRef(ctx, r, stack, ptr, r, f)
 }
 
-func (c *Compiler) compileRef(r *resource, stack []schemaRef, refPtr string, res *resource, ref string) (*Schema, error) {
+func (c *Compiler) compileRef(ctx context.Context, r *resource, stack []schemaRef, refPtr string, res *resource, ref string) (*Schema, error) {
 	base := r.baseURL(res.floc)
 	ref, err := resolveURL(base, ref)
 	if err != nil {
@@ -194,9 +195,9 @@ func (c *Compiler) compileRef(r *resource, stack []schemaRef, refPtr string, res
 	sr := r.findResource(u)
 	if sr == nil {
 		// external resource
-		return c.compileURL(ref, stack, refPtr)
+		return c.compileURL(ctx, ref, stack, refPtr)
 	}
-	sr, err = r.resolveFragment(c, sr, f)
+	sr, err = r.resolveFragment(ctx, c, sr, f)
 	if err != nil {
 		return nil, err
 	}
@@ -212,10 +213,10 @@ func (c *Compiler) compileRef(r *resource, stack []schemaRef, refPtr string, res
 	}
 
 	sr.schema = newSchema(r.url, sr.floc, sr.doc)
-	return c.compile(r, stack, schemaRef{refPtr, sr.schema, false}, sr)
+	return c.compile(ctx, r, stack, schemaRef{refPtr, sr.schema, false}, sr)
 }
 
-func (c *Compiler) compileDynamicAnchors(r *resource, res *resource) error {
+func (c *Compiler) compileDynamicAnchors(ctx context.Context, r *resource, res *resource) error {
 	if r.draft.version < 2020 {
 		return nil
 	}
@@ -225,7 +226,7 @@ func (c *Compiler) compileDynamicAnchors(r *resource, res *resource) error {
 	for _, sr := range rr {
 		if m, ok := sr.doc.(map[string]interface{}); ok {
 			if _, ok := m["$dynamicAnchor"]; ok {
-				sch, err := c.compileRef(r, nil, "IGNORED", r, sr.floc)
+				sch, err := c.compileRef(ctx, r, nil, "IGNORED", r, sr.floc)
 				if err != nil {
 					return err
 				}
@@ -236,8 +237,8 @@ func (c *Compiler) compileDynamicAnchors(r *resource, res *resource) error {
 	return nil
 }
 
-func (c *Compiler) compile(r *resource, stack []schemaRef, sref schemaRef, res *resource) (*Schema, error) {
-	if err := c.compileDynamicAnchors(r, res); err != nil {
+func (c *Compiler) compile(ctx context.Context, r *resource, stack []schemaRef, sref schemaRef, res *resource) (*Schema, error) {
+	if err := c.compileDynamicAnchors(ctx, r, res); err != nil {
 		return nil, err
 	}
 
@@ -246,11 +247,11 @@ func (c *Compiler) compile(r *resource, stack []schemaRef, sref schemaRef, res *
 		res.schema.Always = &v
 		return res.schema, nil
 	default:
-		return res.schema, c.compileMap(r, stack, sref, res)
+		return res.schema, c.compileMap(ctx, r, stack, sref, res)
 	}
 }
 
-func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, res *resource) error {
+func (c *Compiler) compileMap(ctx context.Context, r *resource, stack []schemaRef, sref schemaRef, res *resource) error {
 	m := res.doc.(map[string]interface{})
 
 	if err := checkLoop(stack, sref); err != nil {
@@ -262,7 +263,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	var err error
 
 	if ref, ok := m["$ref"]; ok {
-		s.Ref, err = c.compileRef(r, stack, "$ref", res, ref.(string))
+		s.Ref, err = c.compileRef(ctx, r, stack, "$ref", res, ref.(string))
 		if err != nil {
 			return err
 		}
@@ -274,7 +275,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 
 	if r.draft.version >= 2019 {
 		if ref, ok := m["$recursiveRef"]; ok {
-			s.RecursiveRef, err = c.compileRef(r, stack, "$recursiveRef", res, ref.(string))
+			s.RecursiveRef, err = c.compileRef(ctx, r, stack, "$recursiveRef", res, ref.(string))
 			if err != nil {
 				return err
 			}
@@ -282,7 +283,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 	if r.draft.version >= 2020 {
 		if dref, ok := m["$dynamicRef"]; ok {
-			s.DynamicRef, err = c.compileRef(r, stack, "$dynamicRef", res, dref.(string))
+			s.DynamicRef, err = c.compileRef(ctx, r, stack, "$dynamicRef", res, dref.(string))
 			if err != nil {
 				return err
 			}
@@ -322,27 +323,27 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 	}
 
-	compile := func(stack []schemaRef, ptr string) (*Schema, error) {
-		return c.compileRef(r, stack, ptr, res, r.url+res.floc+"/"+ptr)
+	compile := func(ctx context.Context, stack []schemaRef, ptr string) (*Schema, error) {
+		return c.compileRef(ctx, r, stack, ptr, res, r.url+res.floc+"/"+ptr)
 	}
 
-	loadSchema := func(pname string, stack []schemaRef) (*Schema, error) {
+	loadSchema := func(ctx context.Context, pname string, stack []schemaRef) (*Schema, error) {
 		if _, ok := m[pname]; ok {
-			return compile(stack, escape(pname))
+			return compile(ctx, stack, escape(pname))
 		}
 		return nil, nil
 	}
 
-	if s.Not, err = loadSchema("not", stack); err != nil {
+	if s.Not, err = loadSchema(ctx, "not", stack); err != nil {
 		return err
 	}
 
-	loadSchemas := func(pname string, stack []schemaRef) ([]*Schema, error) {
+	loadSchemas := func(ctx context.Context, pname string, stack []schemaRef) ([]*Schema, error) {
 		if pvalue, ok := m[pname]; ok {
 			pvalue := pvalue.([]interface{})
 			schemas := make([]*Schema, len(pvalue))
 			for i := range pvalue {
-				sch, err := compile(stack, escape(pname)+"/"+strconv.Itoa(i))
+				sch, err := compile(ctx, stack, escape(pname)+"/"+strconv.Itoa(i))
 				if err != nil {
 					return nil, err
 				}
@@ -352,13 +353,13 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 		return nil, nil
 	}
-	if s.AllOf, err = loadSchemas("allOf", stack); err != nil {
+	if s.AllOf, err = loadSchemas(ctx, "allOf", stack); err != nil {
 		return err
 	}
-	if s.AnyOf, err = loadSchemas("anyOf", stack); err != nil {
+	if s.AnyOf, err = loadSchemas(ctx, "anyOf", stack); err != nil {
 		return err
 	}
-	if s.OneOf, err = loadSchemas("oneOf", stack); err != nil {
+	if s.OneOf, err = loadSchemas(ctx, "oneOf", stack); err != nil {
 		return err
 	}
 
@@ -379,7 +380,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		props := props.(map[string]interface{})
 		s.Properties = make(map[string]*Schema, len(props))
 		for pname := range props {
-			s.Properties[pname], err = compile(nil, "properties/"+escape(pname))
+			s.Properties[pname], err = compile(ctx, nil, "properties/"+escape(pname))
 			if err != nil {
 				return err
 			}
@@ -394,7 +395,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		patternProps := patternProps.(map[string]interface{})
 		s.PatternProperties = make(map[*regexp.Regexp]*Schema, len(patternProps))
 		for pattern := range patternProps {
-			s.PatternProperties[regexp.MustCompile(pattern)], err = compile(nil, "patternProperties/"+escape(pattern))
+			s.PatternProperties[regexp.MustCompile(pattern)], err = compile(ctx, nil, "patternProperties/"+escape(pattern))
 			if err != nil {
 				return err
 			}
@@ -406,7 +407,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		case bool:
 			s.AdditionalProperties = additionalProps
 		case map[string]interface{}:
-			s.AdditionalProperties, err = compile(nil, "additionalProperties")
+			s.AdditionalProperties, err = compile(ctx, nil, "additionalProperties")
 			if err != nil {
 				return err
 			}
@@ -421,7 +422,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 			case []interface{}:
 				s.Dependencies[pname] = toStrings(pvalue)
 			default:
-				s.Dependencies[pname], err = compile(stack, "dependencies/"+escape(pname))
+				s.Dependencies[pname], err = compile(ctx, stack, "dependencies/"+escape(pname))
 				if err != nil {
 					return err
 				}
@@ -441,16 +442,16 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 			deps := deps.(map[string]interface{})
 			s.DependentSchemas = make(map[string]*Schema, len(deps))
 			for pname := range deps {
-				s.DependentSchemas[pname], err = compile(stack, "dependentSchemas/"+escape(pname))
+				s.DependentSchemas[pname], err = compile(ctx, stack, "dependentSchemas/"+escape(pname))
 				if err != nil {
 					return err
 				}
 			}
 		}
-		if s.UnevaluatedProperties, err = loadSchema("unevaluatedProperties", nil); err != nil {
+		if s.UnevaluatedProperties, err = loadSchema(ctx, "unevaluatedProperties", nil); err != nil {
 			return err
 		}
-		if s.UnevaluatedItems, err = loadSchema("unevaluatedItems", nil); err != nil {
+		if s.UnevaluatedItems, err = loadSchema(ctx, "unevaluatedItems", nil); err != nil {
 			return err
 		}
 	}
@@ -462,17 +463,17 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	if r.draft.version >= 2020 {
-		if s.PrefixItems, err = loadSchemas("prefixItems", nil); err != nil {
+		if s.PrefixItems, err = loadSchemas(ctx, "prefixItems", nil); err != nil {
 			return err
 		}
-		if s.Items2020, err = loadSchema("items", nil); err != nil {
+		if s.Items2020, err = loadSchema(ctx, "items", nil); err != nil {
 			return err
 		}
 	} else {
 		if items, ok := m["items"]; ok {
 			switch items.(type) {
 			case []interface{}:
-				s.Items, err = loadSchemas("items", nil)
+				s.Items, err = loadSchemas(ctx, "items", nil)
 				if err != nil {
 					return err
 				}
@@ -481,14 +482,14 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 					case bool:
 						s.AdditionalItems = additionalItems
 					case map[string]interface{}:
-						s.AdditionalItems, err = compile(nil, "additionalItems")
+						s.AdditionalItems, err = compile(ctx, nil, "additionalItems")
 						if err != nil {
 							return err
 						}
 					}
 				}
 			default:
-				s.Items, err = compile(nil, "items")
+				s.Items, err = compile(ctx, nil, "items")
 				if err != nil {
 					return err
 				}
@@ -553,10 +554,10 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		if c, ok := m["const"]; ok {
 			s.Constant = []interface{}{c}
 		}
-		if s.PropertyNames, err = loadSchema("propertyNames", nil); err != nil {
+		if s.PropertyNames, err = loadSchema(ctx, "propertyNames", nil); err != nil {
 			return err
 		}
-		if s.Contains, err = loadSchema("contains", nil); err != nil {
+		if s.Contains, err = loadSchema(ctx, "contains", nil); err != nil {
 			return err
 		}
 		if r.draft.version >= 2020 {
@@ -568,13 +569,13 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 
 	if r.draft.version >= 7 {
 		if m["if"] != nil {
-			if s.If, err = loadSchema("if", stack); err != nil {
+			if s.If, err = loadSchema(ctx, "if", stack); err != nil {
 				return err
 			}
-			if s.Then, err = loadSchema("then", stack); err != nil {
+			if s.Then, err = loadSchema(ctx, "then", stack); err != nil {
 				return err
 			}
-			if s.Else, err = loadSchema("else", stack); err != nil {
+			if s.Else, err = loadSchema(ctx, "else", stack); err != nil {
 				return err
 			}
 		}
@@ -637,12 +638,12 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	return nil
 }
 
-func (c *Compiler) validateSchema(r *resource, v interface{}, vloc string) error {
+func (c *Compiler) validateSchema(ctx context.Context, r *resource, v interface{}, vloc string) error {
 	validate := func(meta *Schema) error {
 		if meta == nil {
 			return nil
 		}
-		return meta.validateValue(v, vloc)
+		return meta.validateValue(ctx, v, vloc)
 	}
 
 	if err := validate(r.draft.meta); err != nil {

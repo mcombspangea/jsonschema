@@ -14,7 +14,7 @@ func TestPowerOfExt(t *testing.T) {
 		if err := c.AddResource("test.json", strings.NewReader(`{"powerOf": "hello"}`)); err != nil {
 			t.Fatal(err)
 		}
-		_, err := c.Compile("test.json")
+		_, err := c.Compile(ctx, "test.json")
 		if err == nil {
 			t.Fatal("error expected")
 		}
@@ -26,17 +26,17 @@ func TestPowerOfExt(t *testing.T) {
 		if err := c.AddResource("test.json", strings.NewReader(`{"powerOf": 10}`)); err != nil {
 			t.Fatal(err)
 		}
-		sch, err := c.Compile("test.json")
+		sch, err := c.Compile(ctx, "test.json")
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Run("validInstance", func(t *testing.T) {
-			if err := sch.Validate(100); err != nil {
+			if err := sch.Validate(ctx, 100); err != nil {
 				t.Fatal(err)
 			}
 		})
 		t.Run("invalidInstance", func(t *testing.T) {
-			if err := sch.Validate(111); err == nil {
+			if err := sch.Validate(ctx, 111); err == nil {
 				t.Fatal("validation must fail")
 			} else {
 				t.Logf("%#v", err)

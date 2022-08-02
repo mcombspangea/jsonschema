@@ -237,7 +237,7 @@ func testFolder(t *testing.T, folder string, draft *jsonschema.Draft) {
 					if err := c.AddResource("schema.json", bytes.NewReader(group.Schema)); err != nil {
 						t.Fatal(err)
 					}
-					schema, err := c.Compile("schema.json")
+					schema, err := c.Compile(ctx, "schema.json")
 					if err != nil {
 						t.Fatalf("%#v", err)
 					}
@@ -248,7 +248,7 @@ func testFolder(t *testing.T, folder string, draft *jsonschema.Draft) {
 									t.Skip()
 								}
 							}
-							err = schema.Validate(test.Data)
+							err = schema.Validate(ctx, test.Data)
 							valid := err == nil
 							if !valid {
 								if _, ok := err.(*jsonschema.ValidationError); ok {
@@ -277,7 +277,7 @@ func TestMustCompile(t *testing.T) {
 				t.Error("panic expected")
 			}
 		}()
-		jsonschema.MustCompile("testdata/invalid_schema.json")
+		jsonschema.MustCompile(ctx, "testdata/invalid_schema.json")
 	})
 
 	t.Run("valid", func(t *testing.T) {
@@ -287,7 +287,7 @@ func TestMustCompile(t *testing.T) {
 				t.Log(r)
 			}
 		}()
-		jsonschema.MustCompile("testdata/person_schema.json")
+		jsonschema.MustCompile(ctx, "testdata/person_schema.json")
 	})
 }
 
@@ -322,7 +322,7 @@ func TestInvalidSchema(t *testing.T) {
 	}
 	for _, test := range invalidTests {
 		t.Run(test.description, func(t *testing.T) {
-			if _, err := jsonschema.Compile(test.url); err == nil {
+			if _, err := jsonschema.Compile(ctx, test.url); err == nil {
 				t.Error("expected error")
 			} else {
 				t.Logf("%v", err)
@@ -353,7 +353,7 @@ func TestInvalidSchema(t *testing.T) {
 			if len(test.Fragment) > 0 {
 				url += test.Fragment
 			}
-			if _, err = c.Compile(url); err == nil {
+			if _, err = c.Compile(ctx, url); err == nil {
 				t.Error("error expected")
 			} else {
 				t.Logf("%#v", err)
@@ -379,7 +379,7 @@ func TestCompileURL(t *testing.T) {
 	}
 	for i, test := range validTests {
 		t.Run(test.schema, func(t *testing.T) {
-			s, err := jsonschema.Compile(test.schema)
+			s, err := jsonschema.Compile(ctx, test.schema)
 			if err != nil {
 				t.Errorf("valid #%d: %v", i, err)
 				return
@@ -389,7 +389,7 @@ func TestCompileURL(t *testing.T) {
 				t.Errorf("valid #%d: %v", i, err)
 				return
 			}
-			err = s.Validate(f)
+			err = s.Validate(ctx, f)
 			_ = f.Close()
 			if err != nil {
 				t.Errorf("valid #%d: %v", i, err)
@@ -404,12 +404,12 @@ func TestInvalidJsonTypeError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("addResource failed. reason: %v\n", err)
 	}
-	schema, err := compiler.Compile("test.json")
+	schema, err := compiler.Compile(ctx, "test.json")
 	if err != nil {
 		t.Fatalf("schema compilation failed. reason: %v\n", err)
 	}
 	v := struct{ name string }{"hello world"}
-	err = schema.Validate(v)
+	err = schema.Validate(ctx, v)
 	switch err.(type) {
 	case jsonschema.InvalidJSONTypeError:
 		// passed: struct is not valid json type
@@ -421,7 +421,7 @@ func TestInvalidJsonTypeError(t *testing.T) {
 func TestInfiniteLoopError(t *testing.T) {
 	t.Run("compile", func(t *testing.T) {
 		compiler := jsonschema.NewCompiler()
-		_, err := compiler.Compile("testdata/loop-compile.json")
+		_, err := compiler.Compile(ctx, "testdata/loop-compile.json")
 		if err == nil {
 			t.Fatal("error expected")
 		}
@@ -438,11 +438,11 @@ func TestInfiniteLoopError(t *testing.T) {
 	})
 	t.Run("validate", func(t *testing.T) {
 		compiler := jsonschema.NewCompiler()
-		schema, err := compiler.Compile("testdata/loop-validate.json")
+		schema, err := compiler.Compile(ctx, "testdata/loop-validate.json")
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = schema.Validate(decodeString(t, `{"prop": 1}`))
+		err = schema.Validate(ctx, decodeString(t, `{"prop": 1}`))
 		switch err := err.(type) {
 		case jsonschema.InfiniteLoopError:
 			suffix := "testdata/loop-validate.json#/$ref/$ref/not/$ref/allOf/0/$ref/anyOf/0/$ref/oneOf/0/$ref/dependencies/prop/$ref/dependentSchemas/prop/$ref/then/$ref/else/$dynamicRef/$ref"
@@ -473,7 +473,7 @@ func TestExtractAnnotations(t *testing.T) {
 			t.Fatalf("addResource failed. reason: %v\n", err)
 		}
 
-		schema, err := compiler.Compile("test.json")
+		schema, err := compiler.Compile(ctx, "test.json")
 		if err != nil {
 			t.Fatalf("schema compilation failed. reason: %v\n", err)
 		}
@@ -515,7 +515,7 @@ func TestExtractAnnotations(t *testing.T) {
 			t.Fatalf("addResource failed. reason: %v\n", err)
 		}
 
-		schema, err := compiler.Compile("test.json")
+		schema, err := compiler.Compile(ctx, "test.json")
 		if err != nil {
 			t.Fatalf("schema compilation failed. reason: %v\n", err)
 		}
@@ -589,7 +589,7 @@ func TestPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := c.Compile("schema.json"); err != nil {
+	if _, err := c.Compile(ctx, "schema.json"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -609,14 +609,14 @@ func TestNonStringFormat(t *testing.T) {
 	if err := c.AddResource("schema.json", strings.NewReader(schema)); err != nil {
 		t.Fatal(err)
 	}
-	s, err := c.Compile("schema.json")
+	s, err := c.Compile(ctx, "schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Validate(5); err == nil {
+	if err = s.Validate(ctx, 5); err == nil {
 		t.Fatal("error expected")
 	}
-	if err = s.Validate(6); err != nil {
+	if err = s.Validate(ctx, 6); err != nil {
 		t.Fatalf("%#v", err)
 	}
 }
@@ -638,20 +638,20 @@ func TestCompiler_LoadURL(t *testing.T) {
 			return nil, errors.New("unsupported schema")
 		}
 	}
-	s, err := c.Compile("map:///schema.json")
+	s, err := c.Compile(ctx, "map:///schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Validate("foo"); err != nil {
+	if err = s.Validate(ctx, "foo"); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Validate("long"); err == nil {
+	if err = s.Validate(ctx, "long"); err == nil {
 		t.Fatal("error expected")
 	}
 }
 
 func TestFilePathSpaces(t *testing.T) {
-	if _, err := jsonschema.Compile("testdata/person schema.json"); err != nil {
+	if _, err := jsonschema.Compile(ctx, "testdata/person schema.json"); err != nil {
 		t.Fatal(err)
 	}
 }

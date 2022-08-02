@@ -1,6 +1,7 @@
 package jsonschema
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -137,11 +138,11 @@ func newSchema(url, floc string, doc interface{}) *Schema {
 // returns *ValidationError if v does not confirm with schema s.
 // returns InfiniteLoopError if it detects loop during validation.
 // returns InvalidJSONTypeError if it detects any non json value in v.
-func (s *Schema) Validate(v interface{}) (err error) {
-	return s.validateValue(v, "")
+func (s *Schema) Validate(ctx context.Context, v interface{}) (err error) {
+	return s.validateValue(context.WithValue(ctx, instanceCtxKey, v), v, "")
 }
 
-func (s *Schema) validateValue(v interface{}, vloc string) (err error) {
+func (s *Schema) validateValue(ctx context.Context, v interface{}, vloc string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			switch r := r.(type) {
@@ -152,7 +153,7 @@ func (s *Schema) validateValue(v interface{}, vloc string) (err error) {
 			}
 		}
 	}()
-	if _, err := s.validate(nil, 0, "", v, vloc); err != nil {
+	if _, err := s.validate(ctx, nil, 0, "", v, vloc); err != nil {
 		ve := ValidationError{
 			KeywordLocation:         "",
 			AbsoluteKeywordLocation: s.Location,
@@ -164,17 +165,18 @@ func (s *Schema) validateValue(v interface{}, vloc string) (err error) {
 	return nil
 }
 
-// validate validates given value v with this schema.
-func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interface{}, vloc string) (result validationResult, err error) {
-	validationError := func(keywordPath string, format string, a ...interface{}) *ValidationError {
-		return &ValidationError{
-			KeywordLocation:         keywordLocation(scope, keywordPath),
-			AbsoluteKeywordLocation: joinPtr(s.Location, keywordPath),
-			InstanceLocation:        vloc,
-			Message:                 fmt.Sprintf(format, a...),
-		}
+func validationError(ctx context.Context, keyword string, format string, a ...interface{}) *ValidationError {
+	return &ValidationError{
+		Keyword:                 keyword,
+		KeywordLocation:         keywordLocation(GetScopes(ctx), keyword),
+		AbsoluteKeywordLocation: joinPtr(GetKeywordPath(ctx), keyword),
+		InstanceLocation:        GetInstancePath(ctx),
+		Message:                 fmt.Sprintf(format, a...),
 	}
+}
 
+// validate validates given value v with this schema.
+func (s *Schema) validate(ctx context.Context, scope []schemaRef, vscope int, spath string, v interface{}, vloc string) (result validationResult, err error) {
 	sref := schemaRef{spath, s, false}
 	if err := checkLoop(scope[len(scope)-vscope:], sref); err != nil {
 		panic(err)
@@ -196,17 +198,19 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		}
 	}
 
-	validate := func(sch *Schema, schPath string, v interface{}, vpath string) error {
+	// Set context values
+	ctx = withValues(ctx, instancePathCtxKey, vloc, scopesCtxKey, scope, keywordPathCtxKey, s.Location)
+	validate := func(ctx context.Context, sch *Schema, schPath string, v interface{}, vpath string) error {
 		vloc := vloc
 		if vpath != "" {
 			vloc += "/" + vpath
 		}
-		_, err := sch.validate(scope, 0, schPath, v, vloc)
+		_, err := sch.validate(ctx, scope, 0, schPath, v, vloc)
 		return err
 	}
 
-	validateInplace := func(sch *Schema, schPath string) error {
-		vr, err := sch.validate(scope, vscope, schPath, v, vloc)
+	validateInplace := func(ctx context.Context, sch *Schema, schPath string) error {
+		vr, err := sch.validate(ctx, scope, vscope, schPath, v, vloc)
 		if err == nil {
 			// update result
 			for pname := range result.unevalProps {
@@ -225,7 +229,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 
 	if s.Always != nil {
 		if !*s.Always {
-			return result, validationError("", "not allowed")
+			return result, validationError(ctx, "", "not allowed")
 		}
 		return result, nil
 	}
@@ -246,7 +250,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			}
 		}
 		if !matched {
-			return result, validationError("type", "expected %s, but got %s", strings.Join(s.Types, " or "), vType)
+			return result, validationError(ctx, "type", "expected %s, but got %s", strings.Join(s.Types, " or "), vType)
 		}
 	}
 
@@ -256,9 +260,9 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		if !equals(v, s.Constant[0]) {
 			switch jsonType(s.Constant[0]) {
 			case "object", "array":
-				errors = append(errors, validationError("const", "const failed"))
+				errors = append(errors, validationError(ctx, "const", "const failed"))
 			default:
-				errors = append(errors, validationError("const", "value must be %#v", s.Constant[0]))
+				errors = append(errors, validationError(ctx, "const", "value must be %#v", s.Constant[0]))
 			}
 		}
 	}
@@ -272,7 +276,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			}
 		}
 		if !matched {
-			errors = append(errors, validationError("enum", s.enumError))
+			errors = append(errors, validationError(ctx, "enum", s.enumError))
 		}
 	}
 
@@ -281,16 +285,16 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		if v, ok := v.(string); ok {
 			val = quote(v)
 		}
-		errors = append(errors, validationError("format", "%v is not valid %s", val, quote(s.Format)))
+		errors = append(errors, validationError(ctx, "format", "%v is not valid %s", val, quote(s.Format)))
 	}
 
 	switch v := v.(type) {
 	case map[string]interface{}:
 		if s.MinProperties != -1 && len(v) < s.MinProperties {
-			errors = append(errors, validationError("minProperties", "minimum %d properties allowed, but found %d properties", s.MinProperties, len(v)))
+			errors = append(errors, validationError(ctx, "minProperties", "minimum %d properties allowed, but found %d properties", s.MinProperties, len(v)))
 		}
 		if s.MaxProperties != -1 && len(v) > s.MaxProperties {
-			errors = append(errors, validationError("maxProperties", "maximum %d properties allowed, but found %d properties", s.MaxProperties, len(v)))
+			errors = append(errors, validationError(ctx, "maxProperties", "maximum %d properties allowed, but found %d properties", s.MaxProperties, len(v)))
 		}
 		if len(s.Required) > 0 {
 			var missing []string
@@ -300,14 +304,14 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 				}
 			}
 			if len(missing) > 0 {
-				errors = append(errors, validationError("required", "missing properties: %s", strings.Join(missing, ", ")))
+				errors = append(errors, validationError(ctx, "required", "missing properties: %s", strings.Join(missing, ", ")))
 			}
 		}
 
 		for pname, sch := range s.Properties {
 			if pvalue, ok := v[pname]; ok {
 				delete(result.unevalProps, pname)
-				if err := validate(sch, "properties/"+escape(pname), pvalue, escape(pname)); err != nil {
+				if err := validate(ctx, sch, "properties/"+escape(pname), pvalue, escape(pname)); err != nil {
 					errors = append(errors, err)
 				}
 			}
@@ -315,7 +319,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 
 		if s.PropertyNames != nil {
 			for pname := range v {
-				if err := validate(s.PropertyNames, "propertyNames", pname, escape(pname)); err != nil {
+				if err := validate(ctx, s.PropertyNames, "propertyNames", pname, escape(pname)); err != nil {
 					errors = append(errors, err)
 				}
 			}
@@ -324,7 +328,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		if s.RegexProperties {
 			for pname := range v {
 				if !isRegex(pname) {
-					errors = append(errors, validationError("", "patternProperty %s is not valid regex", quote(pname)))
+					errors = append(errors, validationError(ctx, "", "patternProperty %s is not valid regex", quote(pname)))
 				}
 			}
 		}
@@ -332,7 +336,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			for pname, pvalue := range v {
 				if pattern.MatchString(pname) {
 					delete(result.unevalProps, pname)
-					if err := validate(sch, "patternProperties/"+escape(pattern.String()), pvalue, escape(pname)); err != nil {
+					if err := validate(ctx, sch, "patternProperties/"+escape(pattern.String()), pvalue, escape(pname)); err != nil {
 						errors = append(errors, err)
 					}
 				}
@@ -341,13 +345,13 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		if s.AdditionalProperties != nil {
 			if allowed, ok := s.AdditionalProperties.(bool); ok {
 				if !allowed && len(result.unevalProps) > 0 {
-					errors = append(errors, validationError("additionalProperties", "additionalProperties %s not allowed", result.unevalPnames()))
+					errors = append(errors, validationError(ctx, "additionalProperties", "additionalProperties %s not allowed", result.unevalPnames()))
 				}
 			} else {
 				schema := s.AdditionalProperties.(*Schema)
 				for pname := range result.unevalProps {
 					if pvalue, ok := v[pname]; ok {
-						if err := validate(schema, "additionalProperties", pvalue, escape(pname)); err != nil {
+						if err := validate(ctx, schema, "additionalProperties", pvalue, escape(pname)); err != nil {
 							errors = append(errors, err)
 						}
 					}
@@ -359,13 +363,13 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			if _, ok := v[dname]; ok {
 				switch dvalue := dvalue.(type) {
 				case *Schema:
-					if err := validateInplace(dvalue, "dependencies/"+escape(dname)); err != nil {
+					if err := validateInplace(ctx, dvalue, "dependencies/"+escape(dname)); err != nil {
 						errors = append(errors, err)
 					}
 				case []string:
 					for i, pname := range dvalue {
 						if _, ok := v[pname]; !ok {
-							errors = append(errors, validationError("dependencies/"+escape(dname)+"/"+strconv.Itoa(i), "property %s is required, if %s property exists", quote(pname), quote(dname)))
+							errors = append(errors, validationError(ctx, "dependencies/"+escape(dname)+"/"+strconv.Itoa(i), "property %s is required, if %s property exists", quote(pname), quote(dname)))
 						}
 					}
 				}
@@ -375,14 +379,14 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			if _, ok := v[dname]; ok {
 				for i, pname := range dvalue {
 					if _, ok := v[pname]; !ok {
-						errors = append(errors, validationError("dependentRequired/"+escape(dname)+"/"+strconv.Itoa(i), "property %s is required, if %s property exists", quote(pname), quote(dname)))
+						errors = append(errors, validationError(ctx, "dependentRequired/"+escape(dname)+"/"+strconv.Itoa(i), "property %s is required, if %s property exists", quote(pname), quote(dname)))
 					}
 				}
 			}
 		}
 		for dname, sch := range s.DependentSchemas {
 			if _, ok := v[dname]; ok {
-				if err := validateInplace(sch, "dependentSchemas/"+escape(dname)); err != nil {
+				if err := validateInplace(ctx, sch, "dependentSchemas/"+escape(dname)); err != nil {
 					errors = append(errors, err)
 				}
 			}
@@ -390,16 +394,16 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 
 	case []interface{}:
 		if s.MinItems != -1 && len(v) < s.MinItems {
-			errors = append(errors, validationError("minItems", "minimum %d items required, but found %d items", s.MinItems, len(v)))
+			errors = append(errors, validationError(ctx, "minItems", "minimum %d items required, but found %d items", s.MinItems, len(v)))
 		}
 		if s.MaxItems != -1 && len(v) > s.MaxItems {
-			errors = append(errors, validationError("maxItems", "maximum %d items required, but found %d items", s.MaxItems, len(v)))
+			errors = append(errors, validationError(ctx, "maxItems", "maximum %d items required, but found %d items", s.MaxItems, len(v)))
 		}
 		if s.UniqueItems {
 			for i := 1; i < len(v); i++ {
 				for j := 0; j < i; j++ {
 					if equals(v[i], v[j]) {
-						errors = append(errors, validationError("uniqueItems", "items at index %d and %d are equal", j, i))
+						errors = append(errors, validationError(ctx, "uniqueItems", "items at index %d and %d are equal", j, i))
 					}
 				}
 			}
@@ -409,7 +413,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		switch items := s.Items.(type) {
 		case *Schema:
 			for i, item := range v {
-				if err := validate(items, "items", item, strconv.Itoa(i)); err != nil {
+				if err := validate(ctx, items, "items", item, strconv.Itoa(i)); err != nil {
 					errors = append(errors, err)
 				}
 			}
@@ -418,12 +422,12 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			for i, item := range v {
 				if i < len(items) {
 					delete(result.unevalItems, i)
-					if err := validate(items[i], "items/"+strconv.Itoa(i), item, strconv.Itoa(i)); err != nil {
+					if err := validate(ctx, items[i], "items/"+strconv.Itoa(i), item, strconv.Itoa(i)); err != nil {
 						errors = append(errors, err)
 					}
 				} else if sch, ok := s.AdditionalItems.(*Schema); ok {
 					delete(result.unevalItems, i)
-					if err := validate(sch, "additionalItems", item, strconv.Itoa(i)); err != nil {
+					if err := validate(ctx, sch, "additionalItems", item, strconv.Itoa(i)); err != nil {
 						errors = append(errors, err)
 					}
 				} else {
@@ -434,7 +438,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 				if additionalItems {
 					result.unevalItems = nil
 				} else if len(v) > len(items) {
-					errors = append(errors, validationError("additionalItems", "only %d items are allowed, but found %d items", len(items), len(v)))
+					errors = append(errors, validationError(ctx, "additionalItems", "only %d items are allowed, but found %d items", len(items), len(v)))
 				}
 			}
 		}
@@ -443,12 +447,12 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		for i, item := range v {
 			if i < len(s.PrefixItems) {
 				delete(result.unevalItems, i)
-				if err := validate(s.PrefixItems[i], "prefixItems/"+strconv.Itoa(i), item, strconv.Itoa(i)); err != nil {
+				if err := validate(ctx, s.PrefixItems[i], "prefixItems/"+strconv.Itoa(i), item, strconv.Itoa(i)); err != nil {
 					errors = append(errors, err)
 				}
 			} else if s.Items2020 != nil {
 				delete(result.unevalItems, i)
-				if err := validate(s.Items2020, "items", item, strconv.Itoa(i)); err != nil {
+				if err := validate(ctx, s.Items2020, "items", item, strconv.Itoa(i)); err != nil {
 					errors = append(errors, err)
 				}
 			} else {
@@ -461,7 +465,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			matched := 0
 			var causes []error
 			for i, item := range v {
-				if err := validate(s.Contains, "contains", item, strconv.Itoa(i)); err != nil {
+				if err := validate(ctx, s.Contains, "contains", item, strconv.Itoa(i)); err != nil {
 					causes = append(causes, err)
 				} else {
 					matched++
@@ -471,10 +475,10 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 				}
 			}
 			if s.MinContains != -1 && matched < s.MinContains {
-				errors = append(errors, validationError("minContains", "valid must be >= %d, but got %d", s.MinContains, matched).add(causes...))
+				errors = append(errors, validationError(ctx, "minContains", "valid must be >= %d, but got %d", s.MinContains, matched).add(causes...))
 			}
 			if s.MaxContains != -1 && matched > s.MaxContains {
-				errors = append(errors, validationError("maxContains", "valid must be <= %d, but got %d", s.MaxContains, matched))
+				errors = append(errors, validationError(ctx, "maxContains", "valid must be <= %d, but got %d", s.MaxContains, matched))
 			}
 		}
 
@@ -483,15 +487,15 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		if s.MinLength != -1 || s.MaxLength != -1 {
 			length := utf8.RuneCount([]byte(v))
 			if s.MinLength != -1 && length < s.MinLength {
-				errors = append(errors, validationError("minLength", "length must be >= %d, but got %d", s.MinLength, length))
+				errors = append(errors, validationError(ctx, "minLength", "length must be >= %d, but got %d", s.MinLength, length))
 			}
 			if s.MaxLength != -1 && length > s.MaxLength {
-				errors = append(errors, validationError("maxLength", "length must be <= %d, but got %d", s.MaxLength, length))
+				errors = append(errors, validationError(ctx, "maxLength", "length must be <= %d, but got %d", s.MaxLength, length))
 			}
 		}
 
 		if s.Pattern != nil && !s.Pattern.MatchString(v) {
-			errors = append(errors, validationError("pattern", "does not match pattern %s", quote(s.Pattern.String())))
+			errors = append(errors, validationError(ctx, "pattern", "does not match pattern %s", quote(s.Pattern.String())))
 		}
 
 		// contentEncoding + contentMediaType
@@ -501,7 +505,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			if s.decoder != nil {
 				b, err := s.decoder(v)
 				if err != nil {
-					errors = append(errors, validationError("contentEncoding", "%s is not %s encoded", quote(v), s.ContentEncoding))
+					errors = append(errors, validationError(ctx, "contentEncoding", "%s is not %s encoded", quote(v), s.ContentEncoding))
 				} else {
 					content, decoded = b, true
 				}
@@ -511,7 +515,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 					content = []byte(v)
 				}
 				if err := s.mediaType(content); err != nil {
-					errors = append(errors, validationError("contentMediaType", "value is not of mediatype %s", quote(s.ContentMediaType)))
+					errors = append(errors, validationError(ctx, "contentMediaType", "value is not of mediatype %s", quote(s.ContentMediaType)))
 				}
 			}
 		}
@@ -530,38 +534,38 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			return f
 		}
 		if s.Minimum != nil && num().Cmp(s.Minimum) < 0 {
-			errors = append(errors, validationError("minimum", "must be >= %v but found %v", f64(s.Minimum), v))
+			errors = append(errors, validationError(ctx, "minimum", "must be >= %v but found %v", f64(s.Minimum), v))
 		}
 		if s.ExclusiveMinimum != nil && num().Cmp(s.ExclusiveMinimum) <= 0 {
-			errors = append(errors, validationError("exclusiveMinimum", "must be > %v but found %v", f64(s.ExclusiveMinimum), v))
+			errors = append(errors, validationError(ctx, "exclusiveMinimum", "must be > %v but found %v", f64(s.ExclusiveMinimum), v))
 		}
 		if s.Maximum != nil && num().Cmp(s.Maximum) > 0 {
-			errors = append(errors, validationError("maximum", "must be <= %v but found %v", f64(s.Maximum), v))
+			errors = append(errors, validationError(ctx, "maximum", "must be <= %v but found %v", f64(s.Maximum), v))
 		}
 		if s.ExclusiveMaximum != nil && num().Cmp(s.ExclusiveMaximum) >= 0 {
-			errors = append(errors, validationError("exclusiveMaximum", "must be < %v but found %v", f64(s.ExclusiveMaximum), v))
+			errors = append(errors, validationError(ctx, "exclusiveMaximum", "must be < %v but found %v", f64(s.ExclusiveMaximum), v))
 		}
 		if s.MultipleOf != nil {
 			if q := new(big.Rat).Quo(num(), s.MultipleOf); !q.IsInt() {
-				errors = append(errors, validationError("multipleOf", "%v not multipleOf %v", v, f64(s.MultipleOf)))
+				errors = append(errors, validationError(ctx, "multipleOf", "%v not multipleOf %v", v, f64(s.MultipleOf)))
 			}
 		}
 	}
 
 	// $ref + $recursiveRef + $dynamicRef
-	validateRef := func(sch *Schema, refPath string) error {
+	validateRef := func(ctx context.Context, sch *Schema, refPath string) error {
 		if sch != nil {
-			if err := validateInplace(sch, refPath); err != nil {
+			if err := validateInplace(ctx, sch, refPath); err != nil {
 				var url = sch.Location
 				if s.url() == sch.url() {
 					url = sch.loc()
 				}
-				return validationError(refPath, "doesn't validate with %s", quote(url)).causes(err)
+				return validationError(ctx, refPath, "doesn't validate with %s", quote(url)).causes(err)
 			}
 		}
 		return nil
 	}
-	if err := validateRef(s.Ref, "$ref"); err != nil {
+	if err := validateRef(ctx, s.Ref, "$ref"); err != nil {
 		errors = append(errors, err)
 	}
 	if s.RecursiveRef != nil {
@@ -575,7 +579,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 				}
 			}
 		}
-		if err := validateRef(sch, "$recursiveRef"); err != nil {
+		if err := validateRef(ctx, sch, "$recursiveRef"); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -596,19 +600,19 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 				}
 			}
 		}
-		if err := validateRef(sch, "$dynamicRef"); err != nil {
+		if err := validateRef(ctx, sch, "$dynamicRef"); err != nil {
 			errors = append(errors, err)
 		}
 	}
 
-	if s.Not != nil && validateInplace(s.Not, "not") == nil {
-		errors = append(errors, validationError("not", "not failed"))
+	if s.Not != nil && validateInplace(ctx, s.Not, "not") == nil {
+		errors = append(errors, validationError(ctx, "not", "not failed"))
 	}
 
 	for i, sch := range s.AllOf {
 		schPath := "allOf/" + strconv.Itoa(i)
-		if err := validateInplace(sch, schPath); err != nil {
-			errors = append(errors, validationError(schPath, "allOf failed").add(err))
+		if err := validateInplace(ctx, sch, schPath); err != nil {
+			errors = append(errors, validationError(ctx, schPath, "allOf failed").add(err))
 		}
 	}
 
@@ -616,14 +620,14 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		matched := false
 		var causes []error
 		for i, sch := range s.AnyOf {
-			if err := validateInplace(sch, "anyOf/"+strconv.Itoa(i)); err == nil {
+			if err := validateInplace(ctx, sch, "anyOf/"+strconv.Itoa(i)); err == nil {
 				matched = true
 			} else {
 				causes = append(causes, err)
 			}
 		}
 		if !matched {
-			errors = append(errors, validationError("anyOf", "anyOf failed").add(causes...))
+			errors = append(errors, validationError(ctx, "anyOf", "anyOf failed").add(causes...))
 		}
 	}
 
@@ -631,11 +635,11 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		matched := -1
 		var causes []error
 		for i, sch := range s.OneOf {
-			if err := validateInplace(sch, "oneOf/"+strconv.Itoa(i)); err == nil {
+			if err := validateInplace(ctx, sch, "oneOf/"+strconv.Itoa(i)); err == nil {
 				if matched == -1 {
 					matched = i
 				} else {
-					errors = append(errors, validationError("oneOf", "valid against schemas at indexes %d and %d", matched, i))
+					errors = append(errors, validationError(ctx, "oneOf", "valid against schemas at indexes %d and %d", matched, i))
 					break
 				}
 			} else {
@@ -643,25 +647,25 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			}
 		}
 		if matched == -1 {
-			errors = append(errors, validationError("oneOf", "oneOf failed").add(causes...))
+			errors = append(errors, validationError(ctx, "oneOf", "oneOf failed").add(causes...))
 		}
 	}
 
 	// if + then + else
 	if s.If != nil {
-		err := validateInplace(s.If, "if")
+		err := validateInplace(ctx, s.If, "if")
 		// "if" leaves dynamic scope
 		scope[len(scope)-1].discard = true
 		if err == nil {
 			if s.Then != nil {
-				if err := validateInplace(s.Then, "then"); err != nil {
-					errors = append(errors, validationError("then", "if-then failed").add(err))
+				if err := validateInplace(ctx, s.Then, "then"); err != nil {
+					errors = append(errors, validationError(ctx, "then", "if-then failed").add(err))
 				}
 			}
 		} else {
 			if s.Else != nil {
-				if err := validateInplace(s.Else, "else"); err != nil {
-					errors = append(errors, validationError("else", "if-else failed").add(err))
+				if err := validateInplace(ctx, s.Else, "else"); err != nil {
+					errors = append(errors, validationError(ctx, "else", "if-else failed").add(err))
 				}
 			}
 		}
@@ -670,7 +674,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 	}
 
 	for _, ext := range s.Extensions {
-		if err := ext.Validate(ValidationContext{result, validate, validateInplace, validationError}, v); err != nil {
+		if err := ext.Validate(ctx, ValidationContext{result, validate, validateInplace, validationError}, v); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -681,7 +685,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 		if s.UnevaluatedProperties != nil {
 			for pname := range result.unevalProps {
 				if pvalue, ok := v[pname]; ok {
-					if err := validate(s.UnevaluatedProperties, "UnevaluatedProperties", pvalue, escape(pname)); err != nil {
+					if err := validate(ctx, s.UnevaluatedProperties, "UnevaluatedProperties", pvalue, escape(pname)); err != nil {
 						errors = append(errors, err)
 					}
 				}
@@ -691,7 +695,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 	case []interface{}:
 		if s.UnevaluatedItems != nil {
 			for i := range result.unevalItems {
-				if err := validate(s.UnevaluatedItems, "UnevaluatedItems", v[i], strconv.Itoa(i)); err != nil {
+				if err := validate(ctx, s.UnevaluatedItems, "UnevaluatedItems", v[i], strconv.Itoa(i)); err != nil {
 					errors = append(errors, err)
 				}
 			}
@@ -705,7 +709,7 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 	case 1:
 		return result, errors[0]
 	default:
-		return result, validationError("", "").add(errors...) // empty message, used just for wrapping
+		return result, validationError(ctx, "", "").add(errors...) // empty message, used just for wrapping
 	}
 }
 
