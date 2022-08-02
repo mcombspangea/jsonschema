@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mcombspangea/jsonschema/v5"
+	"github.com/mcombspangea/jsonschema"
 )
 
 var ctx = context.Background()

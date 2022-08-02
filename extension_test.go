@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mcombspangea/jsonschema/v5"
+	"github.com/mcombspangea/jsonschema"
 )
 
 func TestPowerOfExt(t *testing.T) {

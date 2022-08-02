@@ -4,7 +4,7 @@
 // registering its Loaders.
 //
 // To use httploader, link this package into your program:
-//	import _ "github.com/mcombspangea/jsonschema/v5/httploader"
+//	import _ "github.com/mcombspangea/jsonschema/httploader"
 //
 package httploader
 
@@ -13,7 +13,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/mcombspangea/jsonschema/v5"
+	"github.com/mcombspangea/jsonschema"
 )
 
 // Client is the default HTTP Client used to Get the resource.

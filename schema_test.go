@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mcombspangea/jsonschema/v5"
-	_ "github.com/mcombspangea/jsonschema/v5/httploader"
+	"github.com/mcombspangea/jsonschema"
+	_ "github.com/mcombspangea/jsonschema/httploader"
 )
 
 var testSuite = "testdata/JSON-Schema-Test-Suite@ab0b1ae"
