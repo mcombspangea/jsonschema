@@ -43,7 +43,7 @@ func (s powerOfSchema) Validate(ctx context.Context, vctx jsonschema.ValidationC
 			n = n / pow
 		}
 		if n != 1 {
-			e := vctx.Error(ctx, "powerOf", "%v not powerOf %v", v, pow)
+			e := vctx.Error(ctx, "powerOf", []interface{}{v, pow}, "%v not powerOf %v", v, pow)
 			return e
 		}
 		return nil

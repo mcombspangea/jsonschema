@@ -77,7 +77,7 @@ type ValidationContext struct {
 	result          validationResult
 	validate        func(ctx context.Context, sch *Schema, schPath string, v interface{}, vpath string) error
 	validateInplace func(ctx context.Context, sch *Schema, schPath string) error
-	validationError func(ctx context.Context, keywordPath string, format string, a ...interface{}) *ValidationError
+	validationError func(ctx context.Context, keywordPath string, keywordValue interface{}, format string, a ...interface{}) *ValidationError
 }
 
 // EvaluatedProp marks given property of object as evaluated.
@@ -106,8 +106,8 @@ func (vctx ValidationContext) Validate(ctx context.Context, s *Schema, spath str
 // Error used to construct validation error by extensions.
 //
 // keywordPath is relative-json-pointer to keyword.
-func (vctx ValidationContext) Error(ctx context.Context, keywordPath string, format string, a ...interface{}) *ValidationError {
-	return vctx.validationError(ctx, keywordPath, format, a...)
+func (vctx ValidationContext) Error(ctx context.Context, keywordPath string, keywordValue interface{}, format string, a ...interface{}) *ValidationError {
+	return vctx.validationError(ctx, keywordPath, keywordValue, format, a...)
 }
 
 // Group is used by extensions to group multiple errors as causes to parent error.
