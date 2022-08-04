@@ -3,6 +3,7 @@ package jsonschema
 import (
 	"context"
 	"encoding/json"
+	errorModule "errors"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -305,7 +306,7 @@ func (s *Schema) validate(ctx context.Context, scope []schemaRef, vscope int, sp
 				}
 			}
 			if len(missing) > 0 {
-				errors = append(errors, validationError(ctx, "required", missing, "missing properties: %s", strings.Join(missing, ", ")))
+				errors = append(errors, validationError(ctx, "required", missing, "missing property: %s", strings.Join(missing, ", ")))
 			}
 		}
 
@@ -346,8 +347,7 @@ func (s *Schema) validate(ctx context.Context, scope []schemaRef, vscope int, sp
 		if s.AdditionalProperties != nil {
 			if allowed, ok := s.AdditionalProperties.(bool); ok {
 				if !allowed && len(result.unevalProps) > 0 {
-					pnames := result.unevalPnames()
-					errors = append(errors, validationError(ctx, "additionalProperties", pnames, "additionalProperties %s not allowed", pnames))
+					errors = append(errors, validationError(ctx, "additionalProperties", result.unevalProps, "additionalProperties %s not allowed", result.unevalPnames()))
 				}
 			} else {
 				schema := s.AdditionalProperties.(*Schema)
@@ -440,7 +440,12 @@ func (s *Schema) validate(ctx context.Context, scope []schemaRef, vscope int, sp
 				if additionalItems {
 					result.unevalItems = nil
 				} else if len(v) > len(items) {
-					errors = append(errors, validationError(ctx, "additionalItems", []int{len(items), len(v)}, "only %d items are allowed, but found %d items", len(items), len(v)))
+					for i := len(items) - 1; i < len(v); i++ {
+						s := GetInstancePath(ctx)
+						s = joinPtr(s, strconv.Itoa(i))
+						c := context.WithValue(ctx, instancePathCtxKey, s)
+						errors = append(errors, validationError(c, "additionalItems", i, "unexpected additional item at index %d", i))
+					}
 				}
 			}
 		}
@@ -563,7 +568,12 @@ func (s *Schema) validate(ctx context.Context, scope []schemaRef, vscope int, sp
 				if s.url() == sch.url() {
 					url = sch.loc()
 				}
-				return validationError(ctx, refPath, url, "doesn't validate with %s", quote(url)).causes(err)
+				var ve *ValidationError
+				if errorModule.As(err, &ve) {
+					return err
+				} else {
+					return validationError(ctx, refPath, url, "doesn't validate with %s", quote(url)).causes(err)
+				}
 			}
 		}
 		return nil
@@ -615,7 +625,7 @@ func (s *Schema) validate(ctx context.Context, scope []schemaRef, vscope int, sp
 	for i, sch := range s.AllOf {
 		schPath := "allOf/" + strconv.Itoa(i)
 		if err := validateInplace(ctx, sch, schPath); err != nil {
-			errors = append(errors, validationError(ctx, schPath, nil, "allOf failed").add(err))
+			errors = append(errors, validationError(ctx, "allOf", nil, "allOf failed").add(err))
 		}
 	}
 
