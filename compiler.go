@@ -448,8 +448,16 @@ func (c *Compiler) compileMap(ctx context.Context, r *resource, stack []schemaRe
 				}
 			}
 		}
-		if s.UnevaluatedProperties, err = loadSchema(ctx, "unevaluatedProperties", nil); err != nil {
-			return err
+		if unevaluatedPropertes, ok := m["unevaluatedProperties"]; ok {
+			switch unevalProps := unevaluatedPropertes.(type) {
+			case bool:
+				s.UnevaluatedProperties = unevalProps
+			case map[string]interface{}:
+				s.UnevaluatedProperties, err = compile(ctx, nil, "unevaluatedProperties")
+				if err != nil {
+					return err
+				}
+			}
 		}
 		if s.UnevaluatedItems, err = loadSchema(ctx, "unevaluatedItems", nil); err != nil {
 			return err

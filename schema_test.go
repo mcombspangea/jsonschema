@@ -2,6 +2,7 @@ package jsonschema_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -687,4 +688,26 @@ func decodeReader(t *testing.T, r io.Reader) interface{} {
 		t.Fatal("invalid json:", err)
 	}
 	return doc
+}
+
+func TestUnevaluatedProperties(t *testing.T) {
+	ctx := context.Background()
+	rawSchema := `{
+		"type": "object",
+		"unevaluatedProperties": false
+	}`
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource("schema.json", strings.NewReader(rawSchema)); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := c.Compile(ctx, "schema.json")
+	if err != nil {
+		t.Fatalf("%#v", err)
+	}
+	err = schema.Validate(ctx, map[string]interface{}{
+		"foo": "bar",
+	})
+	if err == nil {
+		t.Fatal("Foo was an unevaluated property that went undetected")
+	}
 }

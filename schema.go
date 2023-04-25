@@ -52,7 +52,7 @@ type Schema struct {
 	Dependencies          map[string]interface{} // map value is *Schema or []string.
 	DependentRequired     map[string][]string
 	DependentSchemas      map[string]*Schema
-	UnevaluatedProperties *Schema
+	UnevaluatedProperties interface{}
 
 	// array validations
 	MinItems         int // -1 if not specified.
@@ -696,10 +696,17 @@ func (s *Schema) validate(ctx context.Context, scope []schemaRef, vscope int, sp
 	switch v := v.(type) {
 	case map[string]interface{}:
 		if s.UnevaluatedProperties != nil {
-			for pname := range result.unevalProps {
-				if pvalue, ok := v[pname]; ok {
-					if err := validate(ctx, s.UnevaluatedProperties, "UnevaluatedProperties", pvalue, escape(pname)); err != nil {
-						errors = append(errors, err)
+			if allowed, ok := s.UnevaluatedProperties.(bool); ok {
+				if !allowed && len(result.unevalProps) > 0 {
+					errors = append(errors, validationError(ctx, "unevaluatedProperties", result.unevalProps, "unevaluatedProperties %s not allowed", result.unevalPnames()))
+				}
+			} else {
+				schema := s.UnevaluatedProperties.(*Schema)
+				for pname := range result.unevalProps {
+					if pvalue, ok := v[pname]; ok {
+						if err := validate(ctx, schema, "unevaluatedProperties", pvalue, escape(pname)); err != nil {
+							errors = append(errors, err)
+						}
 					}
 				}
 			}
